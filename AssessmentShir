@@ -1,0 +1,386 @@
+###Task1
+
+trigger:
+  - main
+
+pool:
+  - vmImage: 'ubuntu18.09'
+
+variables:
+  - name: hackathonConnection 
+    value: 'https://github.com/sahat/hackathon-starter.git'
+  - name: DockerFile
+    value: '$(Build.SourceDirectory)/web/DockerFile'
+  - name: DockerImage
+    value: '$(Build.SourceDirectory)/web/App:latest'
+
+resources:
+  repositories:
+  - repository: hackathon
+    type: github
+    name: sahat/hackathon-starter
+    endpoint: {{ variables.hackathonConnection }}
+
+job: 'Checkout github repo'
+      steps:
+        checkout: 'hackathon'
+        clean: 'Y'
+        persistcredentials
+  
+stage: 'Install and Build node js framework app.js'
+  jobs:
+
+    job: 'Install dependencies'
+      steps:
+        - task: NodeTool@0
+            inputs:
+              versionSpec: '16.x'
+          displayName: 'Install Node'
+
+        - script: |
+            echo "Running npm install.."
+            npm install
+          
+   job: 'Build the app.js'
+     steps:
+       -task: 'Build Node apps'
+          - script: |
+              echo "Running npm run build..'
+              npm run build
+
+stage: 'Copy packages for publish pipeline artifacts'
+dependsOn: 'Install and Build node js framework app.js'
+  job: 'Copy npm packages and package.json'
+    - task: CopyFiles npm packages
+      inputs:
+        sourceFolder: '$(Build.SourcesDirectory)'
+          contents: '*.tgz' 
+        targetFolder: $(Build.ArtifactStagingDirectory)/npm
+        displayName: 'Copy npm package'
+
+    - task: CopyFiles package.json
+      inputs:
+        sourceFolder: '$(Build.SourcesDirectory)'
+          contents: 'package.json' 
+        targetFolder: $(Build.ArtifactStagingDirectory)/npm
+        displayName: 'Copy package.json'
+
+###Task2
+
+trigger:
+  - main
+
+pool:
+  - vmImage: 'ubuntu18.09'
+
+variables:
+  - name: hackathonConnection 
+    value: 'https://github.com/sahat/hackathon-starter.git'
+  - name: DockerFile
+    value: '$(Build.SourceDirectory)/web/DockerFile'
+  - name: DockerImage
+    value: '$(Build.SourceDirectory)/web/App:latest'
+
+resources:
+  repositories:
+  - repository: hackathon
+    type: github
+    name: sahat/hackathon-starter
+    endpoint: {{ variables.hackathonConnection }}
+job: 'Checkout github repo'
+      steps:
+        checkout: 'hackathon'
+        clean: 'Y'
+        persistcredentials
+
+stage: 'Docker Install and create images'
+ jobs:
+  job: 'Install Docker and Docker Compose'
+    - script: |
+        sudo apt update
+        sudo apt install docker.io
+        sudo systemctl start docker
+        sudo systemctl enable docker
+        docver = `docker --version`
+        if [[ $docver ]]
+        then
+         print "docker got installed.. Proceeding with installation of docker compose"
+         sudo curl -L <https://github.com/docker/compose/releases/download/1.29.2/docker-compose -o /usr/local/bin/docker-compose>
+         sudo chmod +x /usr/local/bin/docker-compose
+         doccom = `docker-compose --version`
+         if [[ $doccom ]]
+         then
+          print "Docker compose got installed.."
+         else
+          print "Docker compose not installed. Exiting.."
+          exit 1
+         fi
+        else
+         print "docker not installed. Please try again. Exiting.."
+         exit 1
+        fi 
+   job: 'Build project and Images'
+     steps:
+       - script: |
+           print "building the project for the first time"
+           docker-compose build web
+         displayName: 'Building project Web'
+       - task: Docker@2
+         inputs:
+        command: buildAndPush
+        repository: $(hackathonacrrepository)
+        dockerfile: ${{ variables.DockerFile }}
+        containerRegistry: $(dockerRegistryServiceConnection)
+        displayName: 'Building Docker Image And push'
+        tags: |
+          ${{ variables.DockerImage }}
+          
+       - task: PublishPipelineArtifact@1
+         inputs:
+           artifactName: 'manifests'
+           path: 'manifests'
+          
+
+stage: 'Trivy scan for docker images'
+dependsOn: 'Docker Install and create images'
+condition: succeded('Docker Install and create images')
+ jobs:
+  job: 'Install trivy for ubuntu'
+    - script: |
+        sudo apt-get install wget apt-transport-https gnupg lsb-release       
+        wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
+        echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list
+        sudo apt-get update
+        sudo apt-get install trivy
+      displayName: 'get trivy distrib and install'
+
+  job: 'Trivy scan'
+    - script: |
+        echo "Abort if vulnerability is high or critical..Check results.json if scan fails'
+        trivy -o results.json --exit-code 1 --severity HIGH,CRITICAL nginx:latest
+        echo -e "Vulnerability scan passed as severity might be low/medium. Check results.json"
+
+###Task3
+trigger:
+  - main
+
+pool:
+  - vmImage: 'ubuntu18.09'
+
+variables:
+  - name: hackathonConnection 
+    value: 'https://github.com/sahat/hackathon-starter.git'
+  - name: SonarCubeEndPoint
+    value: 'SonarCube'
+
+resources:
+  repositories:
+  - repository: hackathon
+    type: github
+    name: sahat/hackathon-starter
+    endpoint: {{ variables.hackathonConnection }}
+jobs:
+  job: 'Checkout github repo'
+      steps:
+        checkout: 'hackathon'
+        clean: 'Y'
+        persistcredentials
+  job: 'SonarCube Analysis and Result of the code'
+      steps:
+        - task: SonarQubePrepare@4
+            displayName: 'Prepare apex-web code analysis on SonarQube'
+              inputs:
+           SonarQube: '${{ variables.SonarCubeEndPoint }}'
+           scannerMode: CLI
+           configMode: 'file'
+           ProjectName: 'web'
+           timeoutInMinutes: 100    
+       - task: SonarQubeAnalyze@4
+           displayName: 'Run apex-web code analysis on SonarQube'
+       - task: SonarQubePublish@4
+           displayName: 'Publish apex-web analysis results to quality gate on SonarQube'
+             inputs:
+           pollingTimeoutSec: '100'
+           continueOnError: false
+           timeoutInMinutes: 100
+
+###Task4
+trigger:
+  - main
+
+pool:
+  - vmImage: 'ubuntu18.09'
+
+variables:
+  - name: hackathonConnection 
+    value: 'https://github.com/sahat/hackathon-starter.git'
+  - name: DockerFile
+    value: '$(Build.SourceDirectory)/web/DockerFile'
+  - name: DockerImage
+    value: '$(Build.SourceDirectory)/web/App:latest'
+
+resources:
+  repositories:
+  - repository: hackathon
+    type: github
+    name: sahat/hackathon-starter
+    endpoint: {{ variables.hackathonConnection }}
+job: 'Checkout github repo'
+      steps:
+        checkout: 'hackathon'
+        clean: 'Y'
+        persistcredentials
+
+stage: AKS cluster Deployment
+  jobs:
+  - deployment: Authenticate and Deploy
+    displayName: Deploy job for K8s deploy
+    environment: 'hackathon.aksnamespace'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - task: DownloadPipelineArtifact@2
+            inputs:
+              artifactName: 'manifests'
+              downloadPath: '$(System.ArtifactsDirectory)/manifests'
+
+          - task: KubernetesManifest@0
+            displayName: Create imagePullSecret to autheticate
+            inputs:
+              action: createSecret
+              secretName: $(imagePullSecret)
+              namespace: $(k8sNamespace)
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)
+
+          - task: KubernetesManifest@0
+            displayName: Deploy to Kubernetes cluster
+            inputs:
+              action: deploy
+              namespace: $(k8sNamespace)
+              manifests: |
+                $(System.ArtifactsDirectory)/manifests/deployment.yml
+                $(System.ArtifactsDirectory)/manifests/service.yml
+              imagePullSecrets: |
+                $(imagePullSecret)
+              containers: |
+                $(containerRegistry)/$(hackathonacrrepository):$(tag)
+
+####TASK 5
+Start of ec2 instance using terraform:
+main.tf file of terraform
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+resource "aws_instance" "my_vm" {
+ami           = var.ami //Amazon Linux AMI
+ instance_type = var.instance_type
+ 
+ key_name        = "hac"
+ security_groups = [aws_security_group.ssh_access.name]
+provisioner "remote-exec" {
+   inline = [
+     "aws ec2 start-instances --instance-ids var.instanceid"
+   ]
+ }
+connection {
+   type        = "ssh"
+   host        = self.public_ip
+   user        = "ec2-user"
+   private_key = file("./hac.cer")
+   timeout     = "4m"
+ }
+}
+Note: Assuming Variable ami,instancetype,instanceid ddefined in variable.tf file
+Install mongodb using ansible:
+- hosts: ec2_mongo_hosts
+  user: mongodb
+  sudo: yes
+  tasks:
+
+      - name: Install the pre-requisites
+        apt: name={{ item }} update_cache=yes
+        with_items:
+            - lvm2
+
+      - name: Create a vg named vgdata with /dev/xvdc
+        lvg: vg=vgdata pvs=/dev/xvdc
+
+      - name: Create a lv named lvdata01 in vgdata
+        lvol: vg=vgdata lv=lvdata01 size=80%VG
+
+      - name: Create an ext4 filesystem in /dev/mapper/vgdata-lvdata01
+        filesystem: fstype=ext4 dev=/dev/mapper/vgdata-lvdata01
+
+      - name: Make sure mongod is stopped
+        service: name=mongod state=stopped
+
+      - name: Mount the directory
+        mount: name=/var/lib/mongodb src=/dev/mapper/vgdata-lvdata01 fstype=ext4 state=mounted
+
+      - name: Re-establish permissions for the directory
+        file: path=/var/lib/mongodb owner=mongodb group=nogroup state=directory recurse=yes
+
+      - name: Make sure mongod is started
+        service: name=mongod state=started
+
+mongo db endpoints in kubernetes configmaps and mongodb authentication in kubernetes secret:
+mongodbconfig.yaml:
+kind: ConfigMap
+apiVersion: v2
+metadata:
+     name:  mongodb-enpoints
+     namespace: default
+data:
+     mongodb.url.1: mongo-end-1
+     mongodb.url.2: mongo-end-2
+
+mongodbsecret.yaml:
+user = `echo admin |base64`
+pass = `echo Somepass@3 | base64`
+kind: secret
+apiVersion: V2
+metadata:
+     name: hacsecret
+     namespace: default
+type: opaque
+data:
+    username: $user
+    password: $pass 
+Helm deploy with argo ingress:
+1. helm create nodejs-hackathon-chart
+requirements.yaml - 
+dependencies:
+– name: mongodbdependency
+ repository: linktorepo
+  version:  versionofdepenency
+2. helm dependency update inside charts directory
+ 3. configuration in values.yaml
+        image:
+            repo: reponame
+            tag: tagname
+             reporurl: urlofrepo
+        database:
+              databasename: mongodb
+              databasecred: 
+                         name: hacsecret
+               databseurl: 
+                        name: mongodbendpoints
+                         value: mongodb.url.1
+      service:
+               name: servicename
+               type: nodeport
+               port: portnumber
+      deployment:
+                  app: node-app-hac
+        ingress:
+                name: agro
+                rule: rulename
+                port: portnumber
+                 protocol: [https,http]
+4. helm install node-app-hac
+5. helm upgrade node-app-hac after making changes to the tag in values.yaml
+                      tag: tagname1
