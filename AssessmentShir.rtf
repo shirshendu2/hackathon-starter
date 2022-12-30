@@ -1,0 +1,393 @@
+{\rtf1\ansi\ansicpg1252\deff0\nouicompat{\fonttbl{\f0\fnil\fcharset0 Calibri;}{\f1\fnil Calibri;}}
+{\colortbl ;\red0\green0\blue255;}
+{\*\generator Riched20 6.3.9600}\viewkind4\uc1 
+\pard\sa200\sl276\slmult1\ul\b\f0\fs44\lang9 ###Task1\ulnone\b0\fs22\par
+\par
+trigger:\par
+  - main\par
+\par
+pool:\par
+  - vmImage: 'ubuntu18.09'\par
+\par
+variables:\par
+  - name: hackathonConnection \par
+    value: '{{\field{\*\fldinst{HYPERLINK https://github.com/sahat/hackathon-starter.git }}{\fldrslt{https://github.com/sahat/hackathon-starter.git\ul0\cf0}}}}\f0\fs22 '\par
+  - name: DockerFile\par
+    value: '$(Build.SourceDirectory)/web/DockerFile'\par
+  - name: DockerImage\par
+    value: '$(Build.SourceDirectory)/web/App:latest'\par
+\par
+resources:\par
+  repositories:\par
+  - repository: hackathon\par
+    type: github\par
+    name: sahat/hackathon-starter\par
+    endpoint: \{\{ variables.hackathonConnection \}\}\par
+\par
+job: 'Checkout github repo'\par
+      steps:\par
+        checkout: 'hackathon'\par
+        clean: 'Y'\par
+        persistcredentials\par
+  \par
+stage: 'Install and Build node js framework app.js'\par
+  jobs:\par
+\par
+    job: 'Install dependencies'\par
+      steps:\par
+        - task: NodeTool@0\par
+            inputs:\par
+              versionSpec: '16.x'\par
+          displayName: 'Install Node'\par
+\par
+        - script: |\par
+            echo "Running npm install.."\par
+            npm install\par
+          \par
+   job: 'Build the app.js'\par
+     steps:\par
+       -task: 'Build Node apps'\par
+          - script: |\par
+              echo "Running npm run build..'\par
+              npm run build\par
+\par
+stage: 'Copy packages for publish pipeline artifacts'\par
+dependsOn: 'Install and Build node js framework app.js'\par
+  job: 'Copy npm packages and package.json'\par
+    - task: CopyFiles npm packages\par
+      inputs:\par
+        sourceFolder: '$(Build.SourcesDirectory)'\par
+          contents: '*.tgz' \par
+        targetFolder: $(Build.ArtifactStagingDirectory)/npm\par
+        displayName: 'Copy npm package'\par
+\par
+    - task: CopyFiles package.json\par
+      inputs:\par
+        sourceFolder: '$(Build.SourcesDirectory)'\par
+          contents: 'package.json' \par
+        targetFolder: $(Build.ArtifactStagingDirectory)/npm\par
+        displayName: 'Copy package.json'\par
+\par
+\ul\b\fs44 ###Task2\ulnone\b0\fs22\par
+\par
+trigger:\par
+  - main\par
+\par
+pool:\par
+  - vmImage: 'ubuntu18.09'\par
+\par
+variables:\par
+  - name: hackathonConnection \par
+    value: '{{\field{\*\fldinst{HYPERLINK https://github.com/sahat/hackathon-starter.git }}{\fldrslt{https://github.com/sahat/hackathon-starter.git\ul0\cf0}}}}\f0\fs22 '\par
+  - name: DockerFile\par
+    value: '$(Build.SourceDirectory)/web/DockerFile'\par
+  - name: DockerImage\par
+    value: '$(Build.SourceDirectory)/web/App:latest'\par
+\par
+resources:\par
+  repositories:\par
+  - repository: hackathon\par
+    type: github\par
+    name: sahat/hackathon-starter\par
+    endpoint: \{\{ variables.hackathonConnection \}\}\par
+job: 'Checkout github repo'\par
+      steps:\par
+        checkout: 'hackathon'\par
+        clean: 'Y'\par
+        persistcredentials\par
+\par
+stage: 'Docker Install and create images'\par
+ jobs:\par
+  job: 'Install Docker and Docker Compose'\par
+    - script: |\par
+        sudo apt update\par
+        sudo apt install docker.io\par
+        sudo systemctl start docker\par
+        sudo systemctl enable docker\par
+        docver = `docker --version`\par
+        if [[ $docver ]]\par
+        then\par
+         print "docker got installed.. Proceeding with installation of docker compose"\par
+         sudo curl -L <{{\field{\*\fldinst{HYPERLINK "https://github.com/docker/compose/releases/download/1.29.2/docker-compose -o /usr/local/bin/docker-compose"}}{\fldrslt{https://github.com/docker/compose/releases/download/1.29.2/docker-compose -o /usr/local/bin/docker-compose\ul0\cf0}}}}\f0\fs22 >\par
+         sudo chmod +x /usr/local/bin/docker-compose\par
+         doccom = `docker-compose --version`\par
+         if [[ $doccom ]]\par
+         then\par
+          print "Docker compose got installed.."\par
+         else\par
+          print "Docker compose not installed. Exiting.."\par
+          exit 1\par
+         fi\par
+        else\par
+         print "docker not installed. Please try again. Exiting.."\par
+         exit 1\par
+        fi \par
+   job: 'Build project and Images'\par
+     steps:\par
+       - script: |\par
+           print "building the project for the first time"\par
+           docker-compose build web\par
+         displayName: 'Building project Web'\par
+       - task: Docker@2\par
+         inputs:\par
+        command: buildAndPush\par
+        repository: $(hackathonacrrepository)\par
+        dockerfile: $\{\{ variables.DockerFile \}\}\par
+        containerRegistry: $(dockerRegistryServiceConnection)\par
+        displayName: 'Building Docker Image And push'\par
+        tags: |\par
+          $\{\{ variables.DockerImage \}\}\par
+          \par
+       - task: PublishPipelineArtifact@1\par
+         inputs:\par
+           artifactName: 'manifests'\par
+           path: 'manifests'\par
+          \par
+\par
+stage: 'Trivy scan for docker images'\par
+dependsOn: 'Docker Install and create images'\par
+condition: succeded('Docker Install and create images')\par
+ jobs:\par
+  job: 'Install trivy for ubuntu'\par
+    - script: |\par
+        sudo apt-get install wget apt-transport-https gnupg lsb-release       \par
+        wget -qO - {{\field{\*\fldinst{HYPERLINK https://aquasecurity.github.io/trivy-repo/deb/public.key }}{\fldrslt{https://aquasecurity.github.io/trivy-repo/deb/public.key\ul0\cf0}}}}\f0\fs22  | sudo apt-key add -\par
+        echo deb {{\field{\*\fldinst{HYPERLINK https://aquasecurity.github.io/trivy-repo/deb }}{\fldrslt{https://aquasecurity.github.io/trivy-repo/deb\ul0\cf0}}}}\f0\fs22  $(lsb_release -sc) main | sudo tee /etc/apt/sources.list.d/trivy.list\par
+        sudo apt-get update\par
+        sudo apt-get install trivy\par
+      displayName: 'get trivy distrib and install'\par
+\par
+  job: 'Trivy scan'\par
+    - script: |\par
+        echo "Abort if vulnerability is high or critical..Check results.json if scan fails'\par
+        trivy -o results.json --exit-code 1 --severity HIGH,CRITICAL nginx:latest\par
+        echo -e "Vulnerability scan passed as severity might be low/medium. Check results.json"\par
+\par
+\ul\b\fs44 ###Task3\ulnone\b0\fs22\par
+trigger:\par
+  - main\par
+\par
+pool:\par
+  - vmImage: 'ubuntu18.09'\par
+\par
+variables:\par
+  - name: hackathonConnection \par
+    value: '{{\field{\*\fldinst{HYPERLINK https://github.com/sahat/hackathon-starter.git }}{\fldrslt{https://github.com/sahat/hackathon-starter.git\ul0\cf0}}}}\f0\fs22 '\par
+  - name: SonarCubeEndPoint\par
+    value: 'SonarCube'\par
+\par
+resources:\par
+  repositories:\par
+  - repository: hackathon\par
+    type: github\par
+    name: sahat/hackathon-starter\par
+    endpoint: \{\{ variables.hackathonConnection \}\}\par
+jobs:\par
+  job: 'Checkout github repo'\par
+      steps:\par
+        checkout: 'hackathon'\par
+        clean: 'Y'\par
+        persistcredentials\par
+  job: 'SonarCube Analysis and Result of the code'\par
+      steps:\par
+        - task: SonarQubePrepare@4\par
+            displayName: 'Prepare apex-web code analysis on SonarQube'\par
+              inputs:\par
+           SonarQube: '$\{\{ variables.SonarCubeEndPoint \}\}'\par
+           scannerMode: CLI\par
+           configMode: 'file'\par
+           ProjectName: 'web'\par
+           timeoutInMinutes: 100    \par
+       - task: SonarQubeAnalyze@4\par
+           displayName: 'Run apex-web code analysis on SonarQube'\par
+       - task: SonarQubePublish@4\par
+           displayName: 'Publish apex-web analysis results to quality gate on SonarQube'\par
+             inputs:\par
+           pollingTimeoutSec: '100'\par
+           continueOnError: false\par
+           timeoutInMinutes: 100\par
+\par
+\ul\b\fs44 ###Task4\ulnone\b0\fs22\par
+trigger:\par
+  - main\par
+\par
+pool:\par
+  - vmImage: 'ubuntu18.09'\par
+\par
+variables:\par
+  - name: hackathonConnection \par
+    value: '{{\field{\*\fldinst{HYPERLINK https://github.com/sahat/hackathon-starter.git }}{\fldrslt{https://github.com/sahat/hackathon-starter.git\ul0\cf0}}}}\f0\fs22 '\par
+  - name: DockerFile\par
+    value: '$(Build.SourceDirectory)/web/DockerFile'\par
+  - name: DockerImage\par
+    value: '$(Build.SourceDirectory)/web/App:latest'\par
+\par
+resources:\par
+  repositories:\par
+  - repository: hackathon\par
+    type: github\par
+    name: sahat/hackathon-starter\par
+    endpoint: \{\{ variables.hackathonConnection \}\}\par
+job: 'Checkout github repo'\par
+      steps:\par
+        checkout: 'hackathon'\par
+        clean: 'Y'\par
+        persistcredentials\par
+\par
+stage: AKS cluster Deployment\par
+  jobs:\par
+  - deployment: Authenticate and Deploy\par
+    displayName: Deploy job for K8s deploy\par
+    environment: 'hackathon.aksnamespace'\par
+    strategy:\par
+      runOnce:\par
+        deploy:\par
+          steps:\par
+          - task: DownloadPipelineArtifact@2\par
+            inputs:\par
+              artifactName: 'manifests'\par
+              downloadPath: '$(System.ArtifactsDirectory)/manifests'\par
+\par
+          - task: KubernetesManifest@0\par
+            displayName: Create imagePullSecret to autheticate\par
+            inputs:\par
+              action: createSecret\par
+              secretName: $(imagePullSecret)\par
+              namespace: $(k8sNamespace)\par
+              dockerRegistryEndpoint: $(dockerRegistryServiceConnection)\par
+\par
+          - task: KubernetesManifest@0\par
+            displayName: Deploy to Kubernetes cluster\par
+            inputs:\par
+              action: deploy\par
+              namespace: $(k8sNamespace)\par
+              manifests: |\par
+                $(System.ArtifactsDirectory)/manifests/deployment.yml\par
+                $(System.ArtifactsDirectory)/manifests/service.yml\par
+              imagePullSecrets: |\par
+                $(imagePullSecret)\par
+              containers: |\par
+                $(containerRegistry)/$(hackathonacrrepository):$(tag)\par
+\par
+\b\fs44 ####TASK 5\b0\fs22\par
+\b\i\fs28 Start of ec2 instance using terraform:\b0\par
+\b\i0\fs22 main.tf file of terraform\b0\par
+terraform \{\par
+  required_providers \{\par
+    aws = \{\par
+      source = "hashicorp/aws"\par
+    \}\par
+  \}\par
+resource "aws_instance" "my_vm" \{\par
+ami           = var.ami //Amazon Linux AMI\par
+ instance_type = var.instance_type\par
+ \par
+ key_name        = "hac"\par
+ security_groups = [aws_security_group.ssh_access.name]\par
+provisioner "remote-exec" \{\par
+   inline = [\par
+     "aws ec2 start-instances --instance-ids var.instanceid"\par
+   ]\par
+ \}\par
+connection \{\par
+   type        = "ssh"\par
+   host        = self.public_ip\par
+   user        = "ec2-user"\par
+   private_key = file("./hac.cer")\par
+   timeout     = "4m"\par
+ \}\par
+\}\par
+\b Note: Assuming Variable ami,instancetype,instanceid ddefined in variable.tf file\par
+\i\fs32 Install mongodb using ansible:\par
+\b0\i0\fs22 - hosts: ec2_mongo_hosts\par
+  user: mongodb\par
+  sudo: yes\par
+  tasks:\par
+\par
+      - name: Install the pre-requisites\par
+        apt: name=\{\{ item \}\} update_cache=yes\par
+        with_items:\par
+            - lvm2\par
+\par
+      - name: Create a vg named vgdata with /dev/xvdc\par
+        lvg: vg=vgdata pvs=/dev/xvdc\par
+\par
+      - name: Create a lv named lvdata01 in vgdata\par
+        lvol: vg=vgdata lv=lvdata01 size=80%VG\par
+\par
+      - name: Create an ext4 filesystem in /dev/mapper/vgdata-lvdata01\par
+        filesystem: fstype=ext4 dev=/dev/mapper/vgdata-lvdata01\par
+\par
+      - name: Make sure mongod is stopped\par
+        service: name=mongod state=stopped\par
+\par
+      - name: Mount the directory\par
+        mount: name=/var/lib/mongodb src=/dev/mapper/vgdata-lvdata01 fstype=ext4 state=mounted\par
+\par
+      - name: Re-establish permissions for the directory\par
+        file: path=/var/lib/mongodb owner=mongodb group=nogroup state=directory recurse=yes\par
+\par
+      - name: Make sure mongod is started\par
+        service: name=mongod state=started\b\par
+\b0\par
+\b\i\fs36 mongo db endpoints in kubernetes configmaps and mongodb authentication in kubernetes secret:\par
+\i0\fs22 mongodbconfig.yaml:\par
+\b0 kind: ConfigMap\par
+apiVersion: v2\par
+metadata:\par
+     name:  mongodb-enpoints\par
+     namespace: default\par
+data:\par
+     mongodb.url.1: mongo-end-1\par
+     mongodb.url.2: mongo-end-2\par
+\par
+\b mongodbsecret.yaml:\par
+\b0 user = `echo admin |base64`\par
+pass = `echo Somepass@3 | base64`\par
+kind: secret\par
+apiVersion: V2\par
+metadata:\par
+     name: hacsecret\par
+     namespace: default\par
+type: opaque\par
+data:\par
+    username: $user\par
+    password: $pass \par
+\ul\b\i\fs36 Helm deploy with argo ingress:\ulnone\par
+\i0\fs22 1. helm create nodejs-hackathon-chart\b0\par
+requirements.yaml - \par
+dependencies:\par
+\f1\endash  name: \f0\lang1033 mongodbdependency\f1\lang9\par
+ repository: \f0\lang1033 linktorepo\f1\lang9\par
+  version: \f0\lang1033  versionofdepenency\par
+\b 2. helm dependency update inside charts directory\par
+ 3. configuration in values.yaml\par
+        image:\par
+            repo: reponame\par
+            tag: tagname\par
+             reporurl: urlofrepo\par
+        database:\par
+              databasename: mongodb\par
+              databasecred: \par
+                         name: \b0\lang9 hacsecret\par
+               \b databseurl\b0 : \par
+                        name: mongodbendpoints\par
+                         value: mongodb.url.1\par
+      \b service\b0 :\par
+               name: servicename\par
+               type: nodeport\par
+               port: portnumber\par
+      \b deployment\b0 :\par
+                  app: node-app-hac\par
+        \b ingress\b0 :\par
+                name: agro\par
+                rule: rulename\par
+                port: portnumber\par
+                 protocol: [https,http]\par
+\b 4. helm install node-app-hac\par
+5. helm upgrade node-app-hac \b0 after making changes to the tag in \b values.yaml\b0\par
+                      \b tag: tagname1\b0\par
+                  \par
+                          \b\i\fs36\par
+}
+ 
